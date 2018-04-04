@@ -1,6 +1,7 @@
 from collections import Counter
 import matplotlib.pyplot as plt
 import networkx as nx
+import pandas as pd
 import numpy as np
 import copy as cp
 import operator
@@ -107,7 +108,7 @@ def plot_robustness(props, Y_random, Y_target,
 
 class AffectedAirports(object):
 
-    def __init__(self, airports_info, routes, lat_center, long_center, dist_from_center):
+    def __init__(self, airports_info, routes):
         """Delete the routes that have at least one airport within a great-circle
         distance from a center location that produced a spatial hazard. 
         Such airports will be referred to as "affected".
@@ -119,6 +120,61 @@ class AffectedAirports(object):
             degrees).
         routes : DataFrame
             Routes with "source_airport", "destination_airport" columns.
+        """
+        self.airports_info = airports_info
+        self.routes = routes
+
+        # Undirected graph representing the routes intially
+        arr_edges = np.array(self.routes)
+        G = nx.Graph()
+        G.add_edges_from(arr_edges)
+        self.n_initial_routes = len(G.edges())
+        self.n_initial_airports = len(G.nodes())
+        self.gcc_size_initial = max(nx.connected_component_subgraphs(G), key=len).number_of_nodes()
+
+        print("Number of initial airports: {}".format(self.n_initial_airports))   
+        print("Number of initial routes: {}".format(self.n_initial_routes))
+        print("Number of airports in the GCC initially: {}".format(self.gcc_size_initial))
+
+        # New routes DataFrame corresponding to the undirected graph
+        self.routes = pd.DataFrame(list(G.edges())).rename(columns={0: "source_airport", 
+                                                                    1: "destination_airport"})
+
+    def is_airport_within_dist(self, lat_airport, long_airport, 
+                               loc_center, dist_from_center):
+        """Check if an airport is within a given distance in kilometers from a
+        geographical center (defined by its latitude and longitude in degrees).
+        
+        Parameters
+        ----------
+        lat_airport : float
+            Latitude in degrees of the airport to consider.
+        long_airport : float
+            Longitude in degrees of the airport to consider.
+        loc_center : GeoLocation
+            Center of the hazard
+        dist_from_center : float
+            Great-circle distance from the center that define the hazard 
+            (in kilometers).
+        
+        Returns
+        -------
+        TYPE
+            Description
+        """
+        loc_airport = GeoLocation.from_degrees(lat_airport, long_airport)
+
+        if loc_center.distance_to(loc_airport) < dist_from_center:
+            return 1
+        else:
+            return 0
+
+    def get_airports_within_dist(self, lat_center, long_center, dist_from_center):
+        """Label every airport given its location inside or outside the "affected"
+        area.
+        
+        Parameters
+        ----------
         lat_center : float
             Latitude in degrees of the center location.
         long_center : float
@@ -127,51 +183,50 @@ class AffectedAirports(object):
             Great-circle distance from the center that define the hazard 
             (in kilometers).
         """
-        self.airports_info = airports_info
-        self.routes = routes
-        self.lat_center = lat_center
-        self.long_center = long_center
-        self.dist_from_center = dist_from_center
+        # GeoLocation object of the center of the hazard
+        loc_center = GeoLocation.from_degrees(lat_center, long_center)
 
-        self.loc_center = GeoLocation.from_degrees(lat_center, long_center)
-
-        self.n_initial_routes = self.routes.shape[0]
-        self.n_initial_airports = self.airports_info.shape[0]
-        print("Number of initial routes: {}".format(self.n_initial_routes))
-        print("Number of initial airports: {}".format(self.n_initial_airports))   
-
-    def is_airport_within_dist(self, lat_airport, long_airport):
-        """Check if an airport is within a given distance in kilometers from a
-        geographical center (defined by its latitude and longitude in degrees).
-        """
-        loc_airport = GeoLocation.from_degrees(lat_airport, long_airport)
-
-        if self.loc_center.distance_to(loc_airport) < self.dist_from_center:
-            return 1
-        else:
-            return 0
-
-    def get_airports_within_dist(self):
-        """Label every airport given its location inside or outside the "affected"
-        area.
-        """
         self.airports_info["is_affected"] = self.airports_info.apply(lambda row: 
-            self.is_airport_within_dist(row["latitude"], row["longitude"]), 
+            self.is_airport_within_dist(row["latitude"], row["longitude"], 
+                                        loc_center, dist_from_center), 
             axis=1)
 
-        self.airports_to_delete = list(self.airports_info[self.airports_info.is_affected==1]["IATA"])
+        self.airports_to_close = list(self.airports_info[self.airports_info.is_affected==1]["IATA"])
 
-        self.n_airports_to_delete = len(self.airports_to_delete)
-        print("Number of airports to delete: {}".format(self.n_airports_to_delete))
+        self.n_airports_to_close = len(self.airports_to_close)
+        self.proportion_airports_closed = self.n_airports_to_close/self.n_initial_airports
+        print("Proportion of closed airports: {:0.3f}%".format(100*self.proportion_airports_closed))
 
-    def get_new_routes(self):
+    def get_new_routes(self, lat_center, long_center, dist_from_center):
         """Label every airport given its location inside or outside the "affected"
         area and update the routes.
+        
+        Parameters
+        ----------
+        lat_center : float
+            Latitude in degrees of the center location.
+        long_center : float
+            Longitude in degrees of the center location.
+        dist_from_center : float
+            Great-circle distance from the center that define the hazard 
+            (in kilometers).
         """
 
-        self.get_airports_within_dist()
-        self.routes = self.routes[~self.routes.source_airport.isin(self.airports_to_delete) 
-                                  & ~self.routes.destination_airport.isin(self.airports_to_delete)]
-        self.n_routes_to_delete = self.n_initial_routes - self.routes.shape[0]
-        print("Number of routes that have been deleted: {}".format(self.n_routes_to_delete))
+        self.get_airports_within_dist(lat_center, long_center, dist_from_center)
+        self.new_routes = self.routes[~self.routes.source_airport.isin(self.airports_to_close) 
+                                      & ~self.routes.destination_airport.isin(self.airports_to_close)]
+        self.n_routes_to_cancel = self.n_initial_routes - self.new_routes.shape[0]
+        self.proportion_routes_cancelled = self.n_routes_to_cancel/self.n_initial_routes
+        print("Proportion of cancelled routes: {:0.3f}%".format(100*self.proportion_routes_cancelled))
+
+        # Size of the GCC of the new network 
+        arr_edges = np.array(self.new_routes)
+        G = nx.Graph()
+        G.add_edges_from(arr_edges)
+        self.gcc_size_new = max(nx.connected_component_subgraphs(G), key=len).number_of_nodes()
+
+        # Size of the GCC of the new network divided by the size of the GCC
+        # of the intial network
+        self.proportion_GCC = self.gcc_size_new/self.gcc_size_initial
+        print("new GCC size / initial GCC size: {:0.3f}%".format(100*self.proportion_GCC))
 
