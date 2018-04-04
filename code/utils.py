@@ -169,7 +169,7 @@ class AffectedAirports(object):
         else:
             return 0
 
-    def get_airports_within_dist(self, lat_center, long_center, dist_from_center):
+    def get_airports_within_dist(self, lat_center, long_center, dist_from_center, verbose=False):
         """Label every airport given its location inside or outside the "affected"
         area.
         
@@ -195,9 +195,10 @@ class AffectedAirports(object):
 
         self.n_airports_to_close = len(self.airports_to_close)
         self.proportion_airports_closed = self.n_airports_to_close/self.n_initial_airports
-        print("Proportion of closed airports: {:0.3f}%".format(100*self.proportion_airports_closed))
+        if verbose:
+            print("Proportion of closed airports: {:0.3f}%".format(100*self.proportion_airports_closed))
 
-    def get_new_routes(self, lat_center, long_center, dist_from_center):
+    def get_new_routes(self, lat_center, long_center, dist_from_center, verbose=False):
         """Label every airport given its location inside or outside the "affected"
         area and update the routes.
         
@@ -212,12 +213,12 @@ class AffectedAirports(object):
             (in kilometers).
         """
 
-        self.get_airports_within_dist(lat_center, long_center, dist_from_center)
+        self.get_airports_within_dist(lat_center, long_center, dist_from_center, verbose=verbose)
         self.new_routes = self.routes[~self.routes.source_airport.isin(self.airports_to_close) 
                                       & ~self.routes.destination_airport.isin(self.airports_to_close)]
         self.n_routes_to_cancel = self.n_initial_routes - self.new_routes.shape[0]
         self.proportion_routes_cancelled = self.n_routes_to_cancel/self.n_initial_routes
-        print("Proportion of cancelled routes: {:0.3f}%".format(100*self.proportion_routes_cancelled))
+        
 
         # Size of the GCC of the new network 
         arr_edges = np.array(self.new_routes)
@@ -231,7 +232,28 @@ class AffectedAirports(object):
         # Size of the GCC of the new network divided by the size of the GCC
         # of the intial network
         self.proportion_GCC = self.gcc_size_new/self.gcc_size_initial
-        print("new GCC size / initial GCC size: {:0.3f}%".format(100*self.proportion_GCC))
+        if verbose:
+            print("Proportion of cancelled routes: {:0.3f}%".format(100*self.proportion_routes_cancelled))
+            print("new GCC size / initial GCC size: {:0.3f}%".format(100*self.proportion_GCC))
+        
+        return self.proportion_airports_closed, self.proportion_routes_cancelled, self.proportion_GCC
 
-    def simulate_hazards(self):
-        pass
+    def simulate_hazards(self, lat=None, lng=None, rad=None):
+
+        if lat==None or lng==None or rad==None:
+            LIM_WEST = -9
+            LIM_EST = 67
+            LIM_SOUTH = 35
+            LIM_NORTH = 72
+            LIM_RADIUS = 5000
+
+            lat_ = random.uniform(LIM_WEST, LIM_EST)
+            lng_ = random.uniform(LIM_SOUTH, LIM_NORTH)
+            rad_ = random.uniform(1, LIM_RADIUS)
+
+        else:
+            lat_ = lat
+            lng_ = lng
+            rad_ = rad
+
+        return self.get_new_routes(lat_, lng_, rad_)
