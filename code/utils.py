@@ -233,3 +233,5 @@ class AffectedAirports(object):
         self.proportion_GCC = self.gcc_size_new/self.gcc_size_initial
         print("new GCC size / initial GCC size: {:0.3f}%".format(100*self.proportion_GCC))
 
+    def simulate_hazards(self):
+        pass
