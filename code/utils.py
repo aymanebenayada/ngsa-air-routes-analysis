@@ -7,6 +7,8 @@ import operator
 import random
 import math
 
+from PyGeoTools.geolocation import GeoLocation
+
 def find_key(d, value):
     result = []
     for key in d:
@@ -99,37 +101,77 @@ def plot_robustness(props, Y_random, Y_target,
     plt.legend(["Random GCC","Random Rest", "Target GCC", "Target Rest"])
     plt.show()
 
-def createCircleAroundWithRadius(lat, lon, radiusMiles):
-    #ring = ogr.Geometry(ogr.wkbLinearRing)
-    latArray = []
-    lonArray = []
 
-    for brng in range(0,360):
-        lat2, lon2 = getLocation(lat,lon,brng,radiusMiles)
-        latArray.append(lat2)
-        lonArray.append(lon2)
+###############################################################################
+# GEOLOCATION UTILS 
 
-    return lonArray,latArray
+class AffectedAirports(object):
 
-def getLocation(lat1, lon1, brng, distanceMiles):
-    lat1 = lat1 * math.pi/ 180.0
-    lon1 = lon1 * math.pi / 180.0
-    #earth radius
-    #R = 6378.1Km
-    #R = ~ 3959 MilesR = 3959
-    R = 3959
+    def __init__(self, airports_info, routes, lat_center, long_center, dist_from_center):
+        """Delete the routes that have at least one airport within a great-circle
+        distance from a center location that produced a spatial hazard. 
+        Such airports will be referred to as "affected".
+        
+        Parameters
+        ----------
+        airports_info : DataFrame
+            Airports information (with at least "latitude" and "longitude" in 
+            degrees).
+        routes : DataFrame
+            Routes with "source_airport", "destination_airport" columns.
+        lat_center : float
+            Latitude in degrees of the center location.
+        long_center : float
+            Longitude in degrees of the center location.
+        dist_from_center : float
+            Great-circle distance from the center that define the hazard 
+            (in kilometers).
+        """
+        self.airports_info = airports_info
+        self.routes = routes
+        self.lat_center = lat_center
+        self.long_center = long_center
+        self.dist_from_center = dist_from_center
 
-    distanceMiles = distanceMiles/R
-    brng = (brng / 90)* math.pi / 2
+        self.loc_center = GeoLocation.from_degrees(lat_center, long_center)
 
-    lat2 = math.asin(math.sin(lat1) * math.cos(distanceMiles) 
-                     + math.cos(lat1) * math.sin(distanceMiles) * math.cos(brng))
+        self.n_initial_routes = self.routes.shape[0]
+        self.n_initial_airports = self.airports_info.shape[0]
+        print("Number of initial routes: {}".format(self.n_initial_routes))
+        print("Number of initial airports: {}".format(self.n_initial_airports))   
 
-    lon2 = lon1 + math.atan2(math.sin(brng)*math.sin(distanceMiles)
-                             * math.cos(lat1),math.cos(distanceMiles)-math.sin(lat1)*math.sin(lat2))
+    def is_airport_within_dist(self, lat_airport, long_airport):
+        """Check if an airport is within a given distance in kilometers from a
+        geographical center (defined by its latitude and longitude in degrees).
+        """
+        loc_airport = GeoLocation.from_degrees(lat_airport, long_airport)
 
-    lon2 = 180.0 * lon2/ math.pi
-    lat2 = 180.0 * lat2/ math.pi
+        if self.loc_center.distance_to(loc_airport) < self.dist_from_center:
+            return 1
+        else:
+            return 0
 
-    return lat2, lon2
+    def get_airports_within_dist(self):
+        """Label every airport given its location inside or outside the "affected"
+        area.
+        """
+        self.airports_info["is_affected"] = self.airports_info.apply(lambda row: 
+            self.is_airport_within_dist(row["latitude"], row["longitude"]), 
+            axis=1)
+
+        self.airports_to_delete = list(self.airports_info[self.airports_info.is_affected==1]["IATA"])
+
+        self.n_airports_to_delete = len(self.airports_to_delete)
+        print("Number of airports to delete: {}".format(self.n_airports_to_delete))
+
+    def get_new_routes(self):
+        """Label every airport given its location inside or outside the "affected"
+        area and update the routes.
+        """
+
+        self.get_airports_within_dist()
+        self.routes = self.routes[~self.routes.source_airport.isin(self.airports_to_delete) 
+                                  & ~self.routes.destination_airport.isin(self.airports_to_delete)]
+        self.n_routes_to_delete = self.n_initial_routes - self.routes.shape[0]
+        print("Number of routes that have been deleted: {}".format(self.n_routes_to_delete))
 
