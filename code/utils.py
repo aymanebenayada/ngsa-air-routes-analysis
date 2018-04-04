@@ -223,7 +223,10 @@ class AffectedAirports(object):
         arr_edges = np.array(self.new_routes)
         G = nx.Graph()
         G.add_edges_from(arr_edges)
-        self.gcc_size_new = max(nx.connected_component_subgraphs(G), key=len).number_of_nodes()
+        try:
+            self.gcc_size_new = max(nx.connected_component_subgraphs(G), key=len).number_of_nodes()
+        except:
+            self.gcc_size_new = 0
 
         # Size of the GCC of the new network divided by the size of the GCC
         # of the intial network
