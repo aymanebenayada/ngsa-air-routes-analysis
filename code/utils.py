@@ -5,7 +5,7 @@ import numpy as np
 import copy as cp
 import operator
 import random
-
+import math
 
 def find_key(d, value):
     result = []
@@ -98,4 +98,38 @@ def plot_robustness(props, Y_random, Y_target,
     plt.ylabel("Sizes")
     plt.legend(["Random GCC","Random Rest", "Target GCC", "Target Rest"])
     plt.show()
+
+def createCircleAroundWithRadius(lat, lon, radiusMiles):
+    #ring = ogr.Geometry(ogr.wkbLinearRing)
+    latArray = []
+    lonArray = []
+
+    for brng in range(0,360):
+        lat2, lon2 = getLocation(lat,lon,brng,radiusMiles)
+        latArray.append(lat2)
+        lonArray.append(lon2)
+
+    return lonArray,latArray
+
+def getLocation(lat1, lon1, brng, distanceMiles):
+    lat1 = lat1 * math.pi/ 180.0
+    lon1 = lon1 * math.pi / 180.0
+    #earth radius
+    #R = 6378.1Km
+    #R = ~ 3959 MilesR = 3959
+    R = 3959
+
+    distanceMiles = distanceMiles/R
+    brng = (brng / 90)* math.pi / 2
+
+    lat2 = math.asin(math.sin(lat1) * math.cos(distanceMiles) 
+                     + math.cos(lat1) * math.sin(distanceMiles) * math.cos(brng))
+
+    lon2 = lon1 + math.atan2(math.sin(brng)*math.sin(distanceMiles)
+                             * math.cos(lat1),math.cos(distanceMiles)-math.sin(lat1)*math.sin(lat2))
+
+    lon2 = 180.0 * lon2/ math.pi
+    lat2 = 180.0 * lat2/ math.pi
+
+    return lat2, lon2
 
