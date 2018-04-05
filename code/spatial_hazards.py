@@ -13,11 +13,12 @@ import random
 
 from PyGeoTools.geolocation import GeoLocation
 from mpl_toolkits.basemap import Basemap
+from matplotlib.pyplot import savefig
 from utils import circle
 
 class SpatialHazards(object):
 
-    def __init__(self, airports_info, routes):
+    def __init__(self, airports_info, routes, avg_shortest_path=False):
         """Delete the routes that have at least one airport within a great-circle
         distance from a center location that produced a spatial hazard. 
         Such airports will be referred to as "affected".
@@ -29,21 +30,44 @@ class SpatialHazards(object):
             degrees).
         routes : DataFrame
             Routes with "source_airport", "destination_airport" columns.
+        avg_shortest_path : bool, optional
+            If True compute the average shortest path of the initial network
+            and the affected one (average shortest path across the different 
+            subgraphs, weighted by the number of nodes of the subgraph).
         """
         self.airports_info = airports_info
         self.routes = routes
+        self.avg_shortest_path = avg_shortest_path
 
         # Undirected graph representing the routes intially
         arr_edges = np.array(self.routes)
         G = nx.Graph()
         G.add_edges_from(arr_edges)
         self.n_initial_routes = len(G.edges())
+        connected_components = list(nx.connected_component_subgraphs(G))
         self.n_initial_airports = len(G.nodes())
-        self.gcc_size_initial = max(nx.connected_component_subgraphs(G), key=len).number_of_nodes()
+        self.gcc_initial = max(connected_components, key=len)
+        self.gcc_size_initial = self.gcc_initial.number_of_nodes()
+        self.robust_points = []
+        self.unrobust_points = []
+        self.robust_points_ts = 0.3
+        self.unrobust_points_ts = -0.05
+
 
         print("Number of initial airports: {}".format(self.n_initial_airports))   
         print("Number of initial routes: {}".format(self.n_initial_routes))
         print("Number of airports in the GCC initially: {}".format(self.gcc_size_initial))
+
+        if self.avg_shortest_path:
+
+            # Average shortest path across the different subgraphs, weighted by 
+            # the number of nodes of the subgraph
+            self.avg_shortest_path_initial = 0
+            for graph in connected_components:
+                self.avg_shortest_path_initial += nx.average_shortest_path_length(graph)*graph.number_of_nodes()
+            self.avg_shortest_path_initial /= G.number_of_nodes()
+
+            print("Average shortest path initially: {:0.2f}".format(self.avg_shortest_path_initial))
 
         # New routes DataFrame corresponding to the undirected graph
         self.routes = pd.DataFrame(list(G.edges())).rename(columns={0: "source_airport", 
@@ -131,23 +155,60 @@ class SpatialHazards(object):
         self.n_routes_to_cancel = self.n_initial_routes - self.new_routes.shape[0]
         self.proportion_routes_cancelled = self.n_routes_to_cancel/self.n_initial_routes
 
-        # Size of the GCC of the new network 
+        # Size of the GCC of the new network (and average shortest path)
         arr_edges = np.array(self.new_routes)
         G = nx.Graph()
         G.add_edges_from(arr_edges)
-        try:
-            self.gcc_size_new = max(nx.connected_component_subgraphs(G), key=len).number_of_nodes()
-        except:
-            self.gcc_size_new = 0
 
-        # Size of the GCC of the new network divided by the size of the size of 
-        # GCC of the intial network
-        self.proportion_GCC = self.gcc_size_new/self.gcc_size_initial
+        if self.proportion_routes_cancelled - self.proportion_airports_closed < self.unrobust_points_ts:
+            self.unrobust_points.append((lat_center, long_center, dist_from_center))
+
+        if self.proportion_routes_cancelled - self.proportion_airports_closed > self.robust_points_ts:
+            self.robust_points.append((lat_center, long_center, dist_from_center))
+
+        try:
+            connected_components = list(nx.connected_component_subgraphs(G))
+            self.gcc_new = max(connected_components, key=len)
+            self.gcc_size_new = self.gcc_new.number_of_nodes()
+
+
+            # Size of the GCC of the new network divided by the size of the size of 
+            # GCC of the intial network (and average shortest path)
+            self.proportion_gcc_size = self.gcc_size_new/self.gcc_size_initial
+
+            if self.avg_shortest_path: 
+
+                self.avg_shortest_path_new = 0
+                for graph in connected_components:
+                    self.avg_shortest_path_new += nx.average_shortest_path_length(graph)*graph.number_of_nodes()
+                self.avg_shortest_path_new /= G.number_of_nodes()
+
+                # Average shortest path of the initial GCC divided by the average 
+                # shortest path of the new GCC (the closer to 1, the less affected
+                # the network)
+                self.proportion_avg_shortest_path = self.avg_shortest_path_initial\
+                                                        /self.avg_shortest_path_new
+        except:
+            self.proportion_gcc_size = 0
+
+            if self.avg_shortest_path:
+                self.proportion_avg_shortest_path = 0
+
+
         if verbose:
+
             print("Proportion of cancelled routes: {:0.3f}%".format(100*self.proportion_routes_cancelled))
-            print("new GCC size / initial GCC size: {:0.3f}%".format(100*self.proportion_GCC))
+            print("new GCC size / initial GCC size: {:0.3f}%".format(100*self.proportion_gcc_size))
+
+            if self.avg_shortest_path:
+                print("initial average shortest path / new: {:0.3f}%".format(100*self.proportion_avg_shortest_path))
         
-        return self.proportion_airports_closed, self.proportion_routes_cancelled, self.proportion_GCC
+        if self.avg_shortest_path:
+            return self.proportion_airports_closed, self.proportion_routes_cancelled,\
+                   self.proportion_gcc_size, self.proportion_avg_shortest_path
+        else:
+            return self.proportion_airports_closed, self.proportion_routes_cancelled,\
+                   self.proportion_gcc_size
 
     def simulate_hazard(self, lat=None, lng=None, rad=None, verbose=False):
         """Simulate a hazard with a center location and a radius (great-circle
@@ -174,13 +235,13 @@ class SpatialHazards(object):
         """
         if lat==None or lng==None or rad==None:
             LIM_WEST = -9
-            LIM_EST = 67
+            LIM_EST = 27
             LIM_SOUTH = 35
             LIM_NORTH = 72
             LIM_RADIUS = 5000
 
-            lat_ = random.uniform(LIM_WEST, LIM_EST)
-            lng_ = random.uniform(LIM_SOUTH, LIM_NORTH)
+            lat_ = random.uniform(LIM_SOUTH, LIM_NORTH)
+            lng_ = random.uniform(LIM_WEST, LIM_EST)
             rad_ = random.uniform(1, LIM_RADIUS)
 
         else:
@@ -194,9 +255,9 @@ class SpatialHazards(object):
 
         return self.get_new_routes(lat_, lng_, rad_, verbose)
 
-    def plot_hazard(self, title=None, n=None, island=False, 
+    def plot_hazard(self, title=None, n=None, iceland=False, 
                     operational_routes_color="mediumblue",
-                    closed_routes_color="firebrick"):
+                    closed_routes_color="firebrick", save_fig=None):
         """Used after simulating a hazard.
         
         Parameters
@@ -206,8 +267,14 @@ class SpatialHazards(object):
         n : None, optional
             Number of maximum routes (closed and operational respectively) 
             to show. 
-        island : bool, optional
-            If True, plot a larger map showing Island.
+        iceland : bool, optional
+            If True, plot a larger map showing Iceland.
+        operational_routes_color : str, optional
+            Color for the routes that are not closed.
+        closed_routes_color : str, optional
+            Color for the routes that have been closed by the hazard.
+        save_fig : bool, optional
+            Specify a suffix for the figure to be saved.
         """
     
         # Settle the environment to plot
@@ -217,9 +284,13 @@ class SpatialHazards(object):
         mpl.rcParams["axes.labelsize"] = 8.
         mpl.rcParams["xtick.labelsize"] = 6.
         mpl.rcParams["ytick.labelsize"] = 6.
-        fig = plt.figure(figsize=(11.7, 8.3))
+        fig = plt.figure(figsize=(16, 9))
 
         if title is not None:
+            title = "\n".join((title, "Closed airports: {:0.1f}% - Closed routes: {:0.1f}% - MCS: {:0.1f}%"\
+                              .format(100*self.proportion_airports_closed, 
+                                      100*self.proportion_routes_cancelled,
+                                      100*self.proportion_gcc_size)))   
             plt.title(title)
 
         plt.subplots_adjust(left=0.05, right=0.95, top=0.90,
@@ -229,14 +300,19 @@ class SpatialHazards(object):
 
         # Draw the background of the map
 
-        # Show Island or not in the map
-        if island:
-            pass
+        # Show Iceland or not in the map 
+        # (y1, x1) are the coordinates of the lower left corner of the map
+        # (y2, x2) are the coordinates of the upper right corner of the map
+        if iceland:
+            y1 = 34
+            x1 = -25
+            y2 = 70
+            x2 = 67.7604
         else:
-            x1 = -12
-            x2 = 33
             y1 = 35
+            x1 = -12
             y2 = 60
+            x2 = 33
         base_map = Basemap(resolution="i", projection="merc", llcrnrlat=y1,
                     urcrnrlat=y2, llcrnrlon=x1, urcrnrlon=x2, lat_ts=(x1+x2)/2)
         base_map.drawcountries(linewidth=0.5)
@@ -301,5 +377,10 @@ class SpatialHazards(object):
                 break
 
         plt.legend(bbox_to_anchor=(0, 1), loc="upper right", ncol=1)
+
+        ax.text(3, 2, "% of routes closed")
+
+        if save_fig is not None:
+            savefig("../figures/simulation_{}.png".format(str(save_fig)))
 
         plt.show()
