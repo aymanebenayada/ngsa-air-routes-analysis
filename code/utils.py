@@ -1,5 +1,5 @@
-from collections import Counter
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 import networkx as nx
 import pandas as pd
 import numpy as np
@@ -8,7 +8,7 @@ import operator
 import random
 import math
 
-from PyGeoTools.geolocation import GeoLocation
+from collections import Counter
 
 def find_key(d, value):
     result = []
@@ -45,9 +45,9 @@ def plot_distribution(G, what="in", xscale="log", yscale="log",
     plt.title(title)
     plt.xlabel(xlabel)
     plt.ylabel("Count")
-    plt.plot(x, y, 'ro')
+    plt.plot(x, y, "ro")
     if fit:
-        plt.plot(x, fit_func(x), 'b')
+        plt.plot(x, fit_func(x), "b")
         plt.figtext(0.75, 0.75, r"$\alpha = {:0.2f}$".format(alpha))
         plt.figtext(0.75, 0.70, r"$C = {:0.2f}$".format(exp(log_C)))
     plt.xscale(xscale)
@@ -102,158 +102,105 @@ def plot_robustness(props, Y_random, Y_target,
     plt.legend(["Random GCC","Random Rest", "Target GCC", "Target Rest"])
     plt.show()
 
+###############################################################################
+# DATA UTILS
+
+def preprocess(df):
+    # Delete rows with missing ids
+    df_processed = df[((df.id_source_airport != "\\N") 
+                      & (df.id_destination_airport != "\\N"))]
+    
+    # Keep only ["id_source_airport", "id_destination_airport"] col
+    # And drop duplicates (corresponding to different airlines)
+    df_processed = df_processed[["source_airport", 
+                                 "destination_airport"]].drop_duplicates()
+    
+    return df_processed
 
 ###############################################################################
 # GEOLOCATION UTILS 
 
-class AffectedAirports(object):
+def shoot(lon, lat, azimuth, maxdist=None):
+    """Shooter Function. Let us shoot a function. We are going to call it 360 
+    times at distance R of the center to plot the circle.
+    """
+    glat1 = lat * np.pi / 180.
+    glon1 = lon * np.pi / 180.
+    s = maxdist / 1.852
+    faz = azimuth * np.pi / 180.
+ 
+    EPS= 0.00000000005
+    if ((np.abs(np.cos(glat1))<EPS) and not (np.abs(np.sin(faz))<EPS)):
+        alert("Only N-S courses are meaningful, starting at a pole!")
+ 
+    a=6378.13/1.852
+    f=1/298.257223563
+    r = 1 - f
+    tu = r * np.tan(glat1)
+    sf = np.sin(faz)
+    cf = np.cos(faz)
+    if (cf==0):
+        b=0.
+    else:
+        b=2. * np.arctan2 (tu, cf)
+ 
+    cu = 1. / np.sqrt(1 + tu * tu)
+    su = tu * cu
+    sa = cu * sf
+    c2a = 1 - sa * sa
+    x = 1. + np.sqrt(1. + c2a * (1. / (r * r) - 1.))
+    x = (x - 2.) / x
+    c = 1. - x
+    c = (x * x / 4. + 1.) / c
+    d = (0.375 * x * x - 1.) * x
+    tu = s / (r * a * c)
+    y = tu
+    c = y + 1
+    while (np.abs (y - c) > EPS):
+ 
+        sy = np.sin(y)
+        cy = np.cos(y)
+        cz = np.cos(b + y)
+        e = 2. * cz * cz - 1.
+        c = y
+        x = e * cy
+        y = e + e - 1.
+        y = (((sy * sy * 4. - 3.) * y * cz * d / 6. + x) *
+              d / 4. - cz) * sy * d + tu
+ 
+    b = cu * cy * cf - su * sy
+    c = r * np.sqrt(sa * sa + b * b)
+    d = su * cy + cu * sy * cf
+    glat2 = (np.arctan2(d, c) + np.pi) % (2*np.pi) - np.pi
+    c = cu * cy - su * sy * cf
+    x = np.arctan2(sy * sf, c)
+    c = ((-3. * c2a + 4.) * f + 4.) * c2a * f / 16.
+    d = ((e * cy * c + cz) * sy * c + y) * sa
+    glon2 = ((glon1 + x - (1. - c) * d * f + np.pi) % (2*np.pi)) - np.pi    
+ 
+    baz = (np.arctan2(sa, b) + np.pi) % (2 * np.pi)
+ 
+    glon2 *= 180./np.pi
+    glat2 *= 180./np.pi
+    baz *= 180./np.pi
+ 
+    return (glon2, glat2, baz)
 
-    def __init__(self, airports_info, routes):
-        """Delete the routes that have at least one airport within a great-circle
-        distance from a center location that produced a spatial hazard. 
-        Such airports will be referred to as "affected".
-        
-        Parameters
-        ----------
-        airports_info : DataFrame
-            Airports information (with at least "latitude" and "longitude" in 
-            degrees).
-        routes : DataFrame
-            Routes with "source_airport", "destination_airport" columns.
-        """
-        self.airports_info = airports_info
-        self.routes = routes
-
-        # Undirected graph representing the routes intially
-        arr_edges = np.array(self.routes)
-        G = nx.Graph()
-        G.add_edges_from(arr_edges)
-        self.n_initial_routes = len(G.edges())
-        self.n_initial_airports = len(G.nodes())
-        self.gcc_size_initial = max(nx.connected_component_subgraphs(G), key=len).number_of_nodes()
-
-        print("Number of initial airports: {}".format(self.n_initial_airports))   
-        print("Number of initial routes: {}".format(self.n_initial_routes))
-        print("Number of airports in the GCC initially: {}".format(self.gcc_size_initial))
-
-        # New routes DataFrame corresponding to the undirected graph
-        self.routes = pd.DataFrame(list(G.edges())).rename(columns={0: "source_airport", 
-                                                                    1: "destination_airport"})
-
-    def is_airport_within_dist(self, lat_airport, long_airport, 
-                               loc_center, dist_from_center):
-        """Check if an airport is within a given distance in kilometers from a
-        geographical center (defined by its latitude and longitude in degrees).
-        
-        Parameters
-        ----------
-        lat_airport : float
-            Latitude in degrees of the airport to consider.
-        long_airport : float
-            Longitude in degrees of the airport to consider.
-        loc_center : GeoLocation
-            Center of the hazard
-        dist_from_center : float
-            Great-circle distance from the center that define the hazard 
-            (in kilometers).
-        
-        Returns
-        -------
-        TYPE
-            Description
-        """
-        loc_airport = GeoLocation.from_degrees(lat_airport, long_airport)
-
-        if loc_center.distance_to(loc_airport) < dist_from_center:
-            return 1
-        else:
-            return 0
-
-    def get_airports_within_dist(self, lat_center, long_center, dist_from_center, verbose=False):
-        """Label every airport given its location inside or outside the "affected"
-        area.
-        
-        Parameters
-        ----------
-        lat_center : float
-            Latitude in degrees of the center location.
-        long_center : float
-            Longitude in degrees of the center location.
-        dist_from_center : float
-            Great-circle distance from the center that define the hazard 
-            (in kilometers).
-        """
-        # GeoLocation object of the center of the hazard
-        loc_center = GeoLocation.from_degrees(lat_center, long_center)
-
-        self.airports_info["is_affected"] = self.airports_info.apply(lambda row: 
-            self.is_airport_within_dist(row["latitude"], row["longitude"], 
-                                        loc_center, dist_from_center), 
-            axis=1)
-
-        self.airports_to_close = list(self.airports_info[self.airports_info.is_affected==1]["IATA"])
-
-        self.n_airports_to_close = len(self.airports_to_close)
-        self.proportion_airports_closed = self.n_airports_to_close/self.n_initial_airports
-        if verbose:
-            print("Proportion of closed airports: {:0.3f}%".format(100*self.proportion_airports_closed))
-
-    def get_new_routes(self, lat_center, long_center, dist_from_center, verbose=False):
-        """Label every airport given its location inside or outside the "affected"
-        area and update the routes.
-        
-        Parameters
-        ----------
-        lat_center : float
-            Latitude in degrees of the center location.
-        long_center : float
-            Longitude in degrees of the center location.
-        dist_from_center : float
-            Great-circle distance from the center that define the hazard 
-            (in kilometers).
-        """
-
-        self.get_airports_within_dist(lat_center, long_center, dist_from_center, verbose=verbose)
-        self.new_routes = self.routes[~self.routes.source_airport.isin(self.airports_to_close) 
-                                      & ~self.routes.destination_airport.isin(self.airports_to_close)]
-        self.n_routes_to_cancel = self.n_initial_routes - self.new_routes.shape[0]
-        self.proportion_routes_cancelled = self.n_routes_to_cancel/self.n_initial_routes
-        
-
-        # Size of the GCC of the new network 
-        arr_edges = np.array(self.new_routes)
-        G = nx.Graph()
-        G.add_edges_from(arr_edges)
-        try:
-            self.gcc_size_new = max(nx.connected_component_subgraphs(G), key=len).number_of_nodes()
-        except:
-            self.gcc_size_new = 0
-
-        # Size of the GCC of the new network divided by the size of the GCC
-        # of the intial network
-        self.proportion_GCC = self.gcc_size_new/self.gcc_size_initial
-        if verbose:
-            print("Proportion of cancelled routes: {:0.3f}%".format(100*self.proportion_routes_cancelled))
-            print("new GCC size / initial GCC size: {:0.3f}%".format(100*self.proportion_GCC))
-        
-        return self.proportion_airports_closed, self.proportion_routes_cancelled, self.proportion_GCC
-
-    def simulate_hazards(self, lat=None, lng=None, rad=None):
-
-        if lat==None or lng==None or rad==None:
-            LIM_WEST = -9
-            LIM_EST = 67
-            LIM_SOUTH = 35
-            LIM_NORTH = 72
-            LIM_RADIUS = 5000
-
-            lat_ = random.uniform(LIM_WEST, LIM_EST)
-            lng_ = random.uniform(LIM_SOUTH, LIM_NORTH)
-            rad_ = random.uniform(1, LIM_RADIUS)
-
-        else:
-            lat_ = lat
-            lng_ = lng
-            rad_ = rad
-
-        return self.get_new_routes(lat_, lng_, rad_)
+def circle(m, centerlon, centerlat, radius, *args, **kwargs):
+    """
+    Points à equi distance of the center (in order to plot a circle in the map)
+    """
+    glon1 = centerlon
+    glat1 = centerlat
+    X = []
+    Y = []
+    for azimuth in range(0, 360):
+        glon2, glat2, baz = shoot(glon1, glat1, azimuth, radius)
+        X.append(glon2)
+        Y.append(glat2)
+    X.append(X[0])
+    Y.append(Y[0])
+ 
+    # m.plot(X,Y,**kwargs) #Should work, but doesn"t...
+    X,Y = m(X,Y)
+    plt.plot(X,Y,**kwargs)
