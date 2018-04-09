@@ -1,14 +1,21 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""This scripts contains useful functions used during this project.
+"""
+
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import networkx as nx
-import pandas as pd
 import numpy as np
 import copy as cp
 import operator
 import random
-import math
 
 from collections import Counter
+
+###############################################################################
+# UTILS
 
 def find_key(d, value):
     result = []
@@ -17,6 +24,8 @@ def find_key(d, value):
             result.append(key)
     return result
 
+###############################################################################
+# NETWORK UTILS
 
 def plot_distribution(G, what="in", xscale="log", yscale="log", 
                       xlabel="Degree", title="Degree distribution", fit=False):
@@ -71,7 +80,8 @@ def targetted_removal_and_size_gcc_rest(prop_to_rmv, G):
     sorted_nodes_by_degree = sorted(dict(G_rmvd.degree()).items(),
                                     key=operator.itemgetter(1), reverse=True)
     n_nodes_to_rmv = int(G_rmvd.number_of_nodes()*prop_to_rmv)
-    nodes_to_rmv = [key_value[0] for key_value in sorted_nodes_by_degree[:n_nodes_to_rmv]]
+    nodes_to_rmv = [key_value[0] 
+                    for key_value in sorted_nodes_by_degree[:n_nodes_to_rmv]]
     G_rmvd.remove_nodes_from(nodes_to_rmv)
     n_nodes_rmvd = G_rmvd.number_of_nodes()
     Gc = max(nx.connected_component_subgraphs(G_rmvd), key=len)
@@ -103,7 +113,7 @@ def plot_robustness(props, Y_random, Y_target,
     plt.show()
 
 ###############################################################################
-# DATA UTILS
+# DATA PROCESSING UTILS
 
 def preprocess(df):
     # Delete rows with missing ids
@@ -188,7 +198,7 @@ def shoot(lon, lat, azimuth, maxdist=None):
 
 def circle(m, centerlon, centerlat, radius, *args, **kwargs):
     """
-    Points à equi distance of the center (in order to plot a circle in the map)
+    Plot a circle in Basemap.
     """
     glon1 = centerlon
     glat1 = centerlat
@@ -201,6 +211,5 @@ def circle(m, centerlon, centerlat, radius, *args, **kwargs):
     X.append(X[0])
     Y.append(Y[0])
  
-    # m.plot(X,Y,**kwargs) #Should work, but doesn"t...
     X,Y = m(X,Y)
     plt.plot(X,Y,**kwargs)

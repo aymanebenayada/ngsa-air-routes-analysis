@@ -56,7 +56,8 @@ class SpatialHazards(object):
 
         print("Number of initial airports: {}".format(self.n_initial_airports))   
         print("Number of initial routes: {}".format(self.n_initial_routes))
-        print("Number of airports in the GCC initially: {}".format(self.gcc_size_initial))
+        print("Number of airports in the GCC initially: {}"\
+             .format(self.gcc_size_initial))
 
         if self.avg_shortest_path:
 
@@ -64,14 +65,16 @@ class SpatialHazards(object):
             # the number of nodes of the subgraph
             self.avg_shortest_path_initial = 0
             for graph in connected_components:
-                self.avg_shortest_path_initial += nx.average_shortest_path_length(graph)*graph.number_of_nodes()
+                self.avg_shortest_path_initial += nx.average_shortest_path_length(graph)\
+                                                  *graph.number_of_nodes()
             self.avg_shortest_path_initial /= G.number_of_nodes()
 
-            print("Average shortest path initially: {:0.2f}".format(self.avg_shortest_path_initial))
+            print("Average shortest path initially: {:0.2f}".format(
+                self.avg_shortest_path_initial))
 
         # New routes DataFrame corresponding to the undirected graph
-        self.routes = pd.DataFrame(list(G.edges())).rename(columns={0: "source_airport", 
-                                                                    1: "destination_airport"})
+        self.routes = pd.DataFrame(list(G.edges())).rename(
+            columns={0: "source_airport", 1: "destination_airport"})
 
     def is_airport_within_dist(self, lat_airport, long_airport, 
                                loc_center, dist_from_center):
@@ -92,17 +95,23 @@ class SpatialHazards(object):
         
         Returns
         -------
-        TYPE
-            Description
+        int
+            1 if the airport is inside the circular area defined by the 
+            center and the radius.
         """
         loc_airport = GeoLocation.from_degrees(lat_airport, long_airport)
 
-        if loc_center.distance_to(loc_airport) < dist_from_center:
+        # If the center and the airport are the same
+        try:
+            if loc_center.distance_to(loc_airport) < dist_from_center:
+                return 1
+            else:
+                return 0
+        except ValueError:
             return 1
-        else:
-            return 0
 
-    def get_airports_within_dist(self, lat_center, long_center, dist_from_center, verbose=False):
+    def get_airports_within_dist(self, lat_center, long_center, dist_from_center, 
+                                 verbose=False):
         """Label every airport given its location inside or outside the "affected"
         area.
         
@@ -115,6 +124,13 @@ class SpatialHazards(object):
         dist_from_center : float
             Great-circle distance from the center that define the hazard 
             (in kilometers).
+        verbose : bool, optional
+            If True, print useful information.
+        
+        Returns
+        -------
+        list(str)
+            List of the closed airports.
         """
         # GeoLocation object of the center of the hazard
         loc_center = GeoLocation.from_degrees(lat_center, long_center)
@@ -124,16 +140,20 @@ class SpatialHazards(object):
                                         loc_center, dist_from_center), 
             axis=1)
 
-        self.airports_to_close = list(self.airports_info[self.airports_info.is_affected==1]["IATA"])
+        self.airports_to_close = list(self.airports_info[
+            self.airports_info.is_affected==1]["IATA"])
 
         self.n_airports_to_close = len(self.airports_to_close)
-        self.proportion_airports_closed = self.n_airports_to_close/self.n_initial_airports
+        self.proportion_airports_closed = self.n_airports_to_close\
+                                          /self.n_initial_airports
         if verbose:
-            print("Proportion of closed airports: {:0.3f}%".format(100*self.proportion_airports_closed))
+            print("Proportion of closed airports: {:0.3f}%".format(
+                100*self.proportion_airports_closed))
             
         return self.airports_to_close
 
-    def get_new_routes(self, lat_center, long_center, dist_from_center, verbose=False):
+    def get_new_routes(self, lat_center, long_center, dist_from_center, 
+                       verbose=False):
         """Label every airport given its location inside or outside the "affected"
         area and update the routes.
         
@@ -146,13 +166,23 @@ class SpatialHazards(object):
         dist_from_center : float
             Great-circle distance from the center that define the hazard 
             (in kilometers).
+        verbose : bool, optional
+            If True, print useful information.
+        
+        Returns
+        -------
+        tuple
         """
         self.get_airports_within_dist(lat_center, long_center, dist_from_center, verbose=verbose)
+        
         self.new_routes = self.routes[~self.routes.source_airport.isin(self.airports_to_close) 
                                       & ~self.routes.destination_airport.isin(self.airports_to_close)]
+
         self.closed_routes = self.routes[self.routes.source_airport.isin(self.airports_to_close) 
                                          | self.routes.destination_airport.isin(self.airports_to_close)]
+
         self.n_routes_to_cancel = self.n_initial_routes - self.new_routes.shape[0]
+
         self.proportion_routes_cancelled = self.n_routes_to_cancel/self.n_initial_routes
 
         # Size of the GCC of the new network (and average shortest path)
@@ -180,7 +210,8 @@ class SpatialHazards(object):
 
                 self.avg_shortest_path_new = 0
                 for graph in connected_components:
-                    self.avg_shortest_path_new += nx.average_shortest_path_length(graph)*graph.number_of_nodes()
+                    self.avg_shortest_path_new += nx.average_shortest_path_length(graph)\
+                                                  *graph.number_of_nodes()
                 self.avg_shortest_path_new /= G.number_of_nodes()
 
                 # Average shortest path of the initial GCC divided by the average 
@@ -194,14 +225,16 @@ class SpatialHazards(object):
             if self.avg_shortest_path:
                 self.proportion_avg_shortest_path = 0
 
-
         if verbose:
 
-            print("Proportion of cancelled routes: {:0.3f}%".format(100*self.proportion_routes_cancelled))
-            print("new GCC size / initial GCC size: {:0.3f}%".format(100*self.proportion_gcc_size))
+            print("Proportion of cancelled routes: {:0.3f}%".format(
+                100*self.proportion_routes_cancelled))
+            print("new GCC size / initial GCC size: {:0.3f}%".format(
+                100*self.proportion_gcc_size))
 
             if self.avg_shortest_path:
-                print("initial average shortest path / new: {:0.3f}%".format(100*self.proportion_avg_shortest_path))
+                print("initial average shortest path / new: {:0.3f}%".format(
+                    100*self.proportion_avg_shortest_path))
         
         if self.avg_shortest_path:
             return self.proportion_airports_closed, self.proportion_routes_cancelled,\
@@ -210,7 +243,8 @@ class SpatialHazards(object):
             return self.proportion_airports_closed, self.proportion_routes_cancelled,\
                    self.proportion_gcc_size
 
-    def simulate_hazard(self, lat=None, lng=None, rad=None, verbose=False):
+    def simulate_hazard(self, lat=None, lng=None, rad=None, region="Europe", 
+                        verbose=False):
         """Simulate a hazard with a center location and a radius (great-circle
         distance from the center location in km).
         
@@ -225,20 +259,32 @@ class SpatialHazards(object):
         rad : None, optional
             Radius the hazard (great-circle distance in km), if None a random center 
             location with a random radius will be chosen (constrained to Europe).
+        region : str, optional
+            Geographical region where to simulate the hazards.
+        verbose : bool, optional
+            If True, print useful information.
         
         Returns
         -------
         tuple
             Proportion of airports closed, proportion of routes cancelled,
             size of the GCC of the new network divided by the size of the GCC
-            of the initial network.
+            of the initial network
         """
         if lat==None or lng==None or rad==None:
-            LIM_WEST = -9
-            LIM_EST = 27
-            LIM_SOUTH = 35
-            LIM_NORTH = 72
-            LIM_RADIUS = 5000
+            if region == 'Europe':               
+                            LIM_WEST = -9
+                            LIM_EST = 27
+                            LIM_SOUTH = 35
+                            LIM_NORTH = 72
+                            LIM_RADIUS = 5000
+                        
+            elif region == 'US':
+                LIM_WEST = -123
+                LIM_EST = -76
+                LIM_SOUTH = 31
+                LIM_NORTH = 44
+                LIM_RADIUS = 5000
 
             lat_ = random.uniform(LIM_SOUTH, LIM_NORTH)
             lng_ = random.uniform(LIM_WEST, LIM_EST)
@@ -258,7 +304,7 @@ class SpatialHazards(object):
     def plot_hazard(self, title=None, n=None, iceland=False, 
                     operational_routes_color="mediumblue",
                     closed_routes_color="firebrick", save_fig=None):
-        """Used after simulating a hazard.
+        """Used after simulating a hazard (with self.simulate_hazard).
         
         Parameters
         ----------
@@ -291,7 +337,7 @@ class SpatialHazards(object):
                               .format(100*self.proportion_airports_closed, 
                                       100*self.proportion_routes_cancelled,
                                       100*self.proportion_gcc_size)))   
-            plt.title(title)
+            plt.suptitle(title, fontsize=16)
 
         plt.subplots_adjust(left=0.05, right=0.95, top=0.90,
                             bottom=0.05, wspace=0.15, hspace=0.05)
@@ -346,7 +392,8 @@ class SpatialHazards(object):
         # Plot the routes that have not been closed
 
         i = 0
-        self.new_routes_permuted = self.new_routes.reindex(np.random.permutation(self.new_routes.index))
+        self.new_routes_permuted = self.new_routes.reindex(np.random.permutation(
+                                                           self.new_routes.index))
         for index, row in self.new_routes_permuted.iterrows():
             lat = [self.airports_info.loc[row["source_airport"]]["latitude"], 
                    self.airports_info.loc[row["destination_airport"]]["latitude"]]
@@ -354,7 +401,7 @@ class SpatialHazards(object):
                    self.airports_info.loc[row["destination_airport"]]["longitude"]]
             x, y = base_map(lon, lat)
             base_map.plot(x, y,  linewidth=0.15, c=operational_routes_color, 
-                          label="Operational routes" if i == 0 else "")  # "o-", markersize=5,
+                          label="Operational routes" if i == 0 else "")
             i += 1
             if i == n:
                 break
@@ -371,14 +418,14 @@ class SpatialHazards(object):
                    self.airports_info.loc[row["destination_airport"]]["longitude"]]
             x, y = base_map(lon, lat)
             base_map.plot(x, y,  linewidth=0.15, c=closed_routes_color, 
-                          label="Closed routes" if i == 0 else "")  # "o-", markersize=5,
+                          label="Closed routes" if i == 0 else "")
             i += 1
             if i == n:
                 break
 
         plt.legend(bbox_to_anchor=(0, 1), loc="upper right", ncol=1)
 
-        ax.text(3, 2, "% of routes closed")
+        plt.setp(plt.gca().get_legend().get_texts(), fontsize="14")
 
         if save_fig is not None:
             savefig("../figures/simulation_{}.png".format(str(save_fig)))
