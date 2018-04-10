@@ -1,5 +1,7 @@
 # ngsa-air-routes-analysis
 
+![alt text](volcano_simulation.gif)
+
 This folder contains the code and data used for *Studying the robustness of air routes networks*. 
 
 The code is in Python 3. The main packages required are: 
